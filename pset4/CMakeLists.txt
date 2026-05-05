@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(cs2620-pset3 CXX)
+project(cs2620-pset4 CXX)
 
 option(SAN "Enable AddressSanitizer+UBSanitizer" OFF)
 option(ASAN "Enable AddressSanitizer" OFF)
@@ -46,21 +46,14 @@ add_library(Pancy OBJECT
     utils.cc
 )
 
-add_executable(pt-single
-    pt-single.cc
-    $<TARGET_OBJECTS:Cotamer>
-    $<TARGET_OBJECTS:Pancy>
-)
-
-add_executable(pt-backup
-    pt-backup.cc
-    $<TARGET_OBJECTS:Cotamer>
-    $<TARGET_OBJECTS:Pancy>
-)
-
-add_executable(pt-paxos
+add_executable(server
     pt-paxos.cc
-    paxos-testing.cc
+    $<TARGET_OBJECTS:Cotamer>
+    $<TARGET_OBJECTS:Pancy>
+)
+
+add_executable(client
+    pt-paxos.cc
     $<TARGET_OBJECTS:Cotamer>
     $<TARGET_OBJECTS:Pancy>
 )
