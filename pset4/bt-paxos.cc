@@ -47,17 +47,34 @@ cot::task<> run_server() {
         // }
 
         // https://stackoverflow.com/questions/48081436/how-you-convert-a-stdstring-view-to-a-const-char
-        std::string url(req.path());
-        const char* url_c = url.c_str();
-        printf("%s url reqd\n", url_c);
+        std::string_view url = req.path();
+        std::cout << url << "url read\n" << std::endl;
 
         bt_tracker_announce_request bt_req;
 
-        if (strcmp(url_c, "/announce") == 0) {
+        if (url == "/announce") {
 
 
             for (auto it = req.search_param_begin(); it != req.search_param_end(); it++) {
-                printf("%s\n", it.name());
+                std::string_view name(it.name());
+                // live laugh love c++
+                std::string value(it.value());
+
+                std::cout << name << " and " << value << std::endl;
+
+                if (name == "info_hash") {
+                    // this can probably be its own helper function
+                    if (sizeof(bt_req.info_hash) != value.size())
+                        assert(false); // handle this properly eventually
+
+                    memcpy(bt_req.info_hash, value.data(), sizeof(bt_req.info_hash));
+                } else if (name == "peer_id") {
+
+                } else if (name == "ip") {
+
+                } else {
+
+                }
             }
 
 

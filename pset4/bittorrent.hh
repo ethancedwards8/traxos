@@ -8,7 +8,7 @@ enum bt_event {
 
 // https://wiki.theory.org/BitTorrent_Tracker_Protocol#Basic_Tracker_Announce_Request
 struct bt_tracker_announce_request {
-    uint8_t info_hash[20];
+    char info_hash[20];
 
     char peer_id[20];
 
