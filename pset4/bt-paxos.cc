@@ -24,8 +24,6 @@ struct message {
 
 // }
 
-char buf[4096];
-
 cot::task<> run_server() {
     printf("Running the server\n");
     cot::fd lfd = co_await cot::tcp_listen("127.0.0.1:9000");
@@ -33,15 +31,35 @@ cot::task<> run_server() {
 
     cot::http_parser hp(std::move(cfd), cot::http_parser::server);
     do {
-        auto req = co_await hp.receive();
+        cot::http_message req = co_await hp.receive();
         if (!hp.ok()) {
             break;                                 // peer closed or parse error
         }
         cot::http_message res;
-        res.status_code(200)
-            .header("Content-Type", "text/plain")
-            .body(std::format("you asked for {}\n", req.url()));
-        co_await hp.send(std::move(res));
+        
+        // https://stackoverflow.com/a/650307
+        // interesting idea for later
+        // switch (req.url()) {
+        //     case "success":
+        //         break;
+        //     default:
+        // }
+
+        const char* url = req.url().c_str();
+        printf("%s url reqd\n", url);
+
+        if (strcmp(url, "/success") == 0) {
+            res.status_code(200)
+                .header("Content-Type", "text/plain")
+                .body(std::format("Success!"));
+                co_await hp.send(std::move(res));
+        } else {
+            res.status_code(404)
+                .header("Content-Type", "text/plain")
+                .body(std::format("you asked for {}\n", req.url()));
+                co_await hp.send(std::move(res));
+        }
+        
     } while (hp.should_keep_alive());
 }
 
@@ -74,8 +92,6 @@ int main(int argc, char *argv[]) {
     cot::loop();
 
 
-
-    printf("Buffer: %s\n", buf);
 
     printf("Exiting\n");
 
