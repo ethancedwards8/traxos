@@ -8,7 +8,6 @@
 #include <iostream>
 #include <optional>
 #include <print>
-#include <ptrcheck.h>
 #include <random>
 
 #define MAXLEN 256;
