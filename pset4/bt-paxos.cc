@@ -1,4 +1,5 @@
 #include <algorithm>
+#include "bittorrent.hh"
 #include "cotamer/http.hh"
 #include "cotamer/cotamer.hh"
 #include <libgen.h>
@@ -45,21 +46,31 @@ cot::task<> run_server() {
         //     default:
         // }
 
-        const char* url = req.url().c_str();
-        printf("%s url reqd\n", url);
+        // https://stackoverflow.com/questions/48081436/how-you-convert-a-stdstring-view-to-a-const-char
+        std::string url(req.path());
+        const char* url_c = url.c_str();
+        printf("%s url reqd\n", url_c);
 
-        if (strcmp(url, "/success") == 0) {
+        bt_tracker_announce_request bt_req;
+
+        if (strcmp(url_c, "/announce") == 0) {
+
+
+            for (auto it = req.search_param_begin(); it != req.search_param_end(); it++) {
+                printf("%s\n", it.name());
+            }
+
+
             res.status_code(200)
                 .header("Content-Type", "text/plain")
                 .body(std::format("Success!"));
-                co_await hp.send(std::move(res));
         } else {
             res.status_code(404)
                 .header("Content-Type", "text/plain")
                 .body(std::format("you asked for {}\n", req.url()));
-                co_await hp.send(std::move(res));
         }
         
+        co_await hp.send(std::move(res));
     } while (hp.should_keep_alive());
 }
 
