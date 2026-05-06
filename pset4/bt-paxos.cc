@@ -1,5 +1,5 @@
-#include "pt-paxos.hh"
 #include <algorithm>
+#include "cotamer/cotamer.hh"
 #include <libgen.h>
 #include <cstdio>
 #include <cstdlib>

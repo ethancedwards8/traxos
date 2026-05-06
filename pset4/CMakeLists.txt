@@ -39,21 +39,12 @@ add_library(Cotamer OBJECT
     ../cotamer/io.cc
 )
 
-add_library(Pancy OBJECT
-    pancydb.cc
-    client_model.cc
-    lockseq_model.cc
-    utils.cc
-)
-
 add_executable(server
-    pt-paxos.cc
+    bt-paxos.cc
     $<TARGET_OBJECTS:Cotamer>
-    $<TARGET_OBJECTS:Pancy>
 )
 
 add_executable(client
     pt-paxos.cc
     $<TARGET_OBJECTS:Cotamer>
-    $<TARGET_OBJECTS:Pancy>
 )
