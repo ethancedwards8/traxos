@@ -1,4 +1,5 @@
 #include <algorithm>
+#include "cotamer/http.hh"
 #include "cotamer/cotamer.hh"
 #include <libgen.h>
 #include <cstdio>
@@ -28,27 +29,29 @@ char buf[4096];
 cot::task<> run_server() {
     printf("Running the server\n");
     cot::fd lfd = co_await cot::tcp_listen("127.0.0.1:9000");
-    while (true) {
-        auto cfd = co_await cot::tcp_accept(lfd);
-        printf("accepted\n");
+    cot::fd cfd = co_await cot::tcp_accept(lfd);
 
-        auto n = co_await cot::read_once(lfd, buf, sizeof(buf));
-        printf("read\n\r\n\r\n");
-        if (n == 0) {
-            break;
+    cot::http_parser hp(std::move(cfd), cot::http_parser::server);
+    do {
+        auto req = co_await hp.receive();
+        if (!hp.ok()) {
+            break;                                 // peer closed or parse error
         }
-
-    }
+        cot::http_message res;
+        res.status_code(200)
+            .header("Content-Type", "text/plain")
+            .body(std::format("you asked for {}\n", req.url()));
+        co_await hp.send(std::move(res));
+    } while (hp.should_keep_alive());
 }
 
 
 cot::task<> run_client() {
     cot::fd lfd = co_await cot::tcp_connect("127.0.0.1:9000");
 
+
     while (true) {
         co_await cot::after(50s);
-        printf("Running as the client\n\r\n\r\n");
-        co_await cot::write(lfd, "echo hello hi", 14);
     }
 }
 
