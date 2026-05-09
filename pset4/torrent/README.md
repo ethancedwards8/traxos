@@ -25,3 +25,5 @@ That's 1 pieces of 262144 bytes each.
 
 Hashed 1 of 1 pieces.
 Writing metainfo file... done.
+
+Also read this instructive blog post: https://medium.com/@abhijitkad62/beyond-the-progress-bar-how-i-visualized-bittorrents-hidden-dance-in-real-time-914038c77423
