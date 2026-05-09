@@ -9,7 +9,11 @@ option(TSAN "Enable ThreadSanitizer" OFF)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/..)
+include_directories(
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
+    ${CMAKE_CURRENT_SOURCE_DIR}/../cotamer
+)
 add_compile_options(-g -O3 -W -Wall)
 add_link_options(-g -O3 -W -Wall)
 
@@ -104,7 +108,7 @@ endif()
 
 # Generate config header
 configure_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/../cotamer/config.hh.in
+    ${CMAKE_CURRENT_SOURCE_DIR}/../cotamer/cotamer/config.hh.in
     ${CMAKE_CURRENT_BINARY_DIR}/cotamer/config.hh
     @ONLY
 )
@@ -112,7 +116,7 @@ include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
 if(COTAMER_HAVE_LLHTTP)
     add_library(CotamerHttp OBJECT
-        ../cotamer/http.cc
+        ../cotamer/cotamer/http.cc
     )
     target_include_directories(CotamerHttp PUBLIC ${LLHTTP_INCLUDE_DIR})
 endif()
@@ -120,8 +124,8 @@ endif()
 
 
 add_library(Cotamer OBJECT
-    ../cotamer/cotamer.cc
-    ../cotamer/io.cc
+    ../cotamer/cotamer/cotamer.cc
+    ../cotamer/cotamer/io.cc
 )
 
 add_executable(server
