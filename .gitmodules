@@ -1,3 +1,6 @@
 [submodule "cotamer"]
 	path = cotamer
 	url = https://github.com/readablesystems/cotamer
+[submodule "bencode"]
+	path = bencode
+	url = https://github.com/willemt/heapless-bencode
