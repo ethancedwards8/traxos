@@ -1,0 +1,3 @@
+[submodule "cotamer"]
+	path = cotamer
+	url = https://github.com/readablesystems/cotamer
