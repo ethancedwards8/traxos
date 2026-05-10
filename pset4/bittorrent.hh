@@ -13,7 +13,7 @@ struct bt_tracker_announce_request {
     char peer_id[20];
 
     // only support ipv4 because v6 is lame
-    char ip[16] = { };
+    uint32_t ip = 0;
 
     uint16_t port;
 

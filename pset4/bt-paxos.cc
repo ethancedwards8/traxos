@@ -3,6 +3,8 @@
 #include "cotamer/http.hh"
 #include "bencode.h"
 #include "cotamer/cotamer.hh"
+#include <cassert>
+#include <charconv>
 #include <libgen.h>
 #include <cstdio>
 #include <cstdlib>
@@ -12,14 +14,56 @@
 #include <optional>
 #include <print>
 #include <random>
+#include <string_view>
 
 #define MAXLEN 256;
 
 namespace cot = cotamer;
 using namespace std::chrono_literals;
 
+// https://stackoverflow.com/questions/9443957/using-sizeof-on-arrays-passed-as-parameters
+template <typename T>
+T parse_number(std::string_view value) {
+    T result{};
+    auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), result);
+    assert(ec == std::errc() && ptr == value.data() + value.size());
+    return result;
+}
+
+template <size_t N>
+void copy_exact(char (&field)[N], std::string_view value) {
+    assert(value.size() == N);
+    memcpy(field, value.data(), N);
+}
+
+uint32_t parse_ipv4(std::string_view value) {
+    uint32_t parts[4];
+    size_t start = 0;
+
+    for (int i = 0; i != 4; ++i) {
+        size_t dot = value.find('.', start);
+        if (i != 3) {
+            assert(dot != std::string_view::npos);
+        } else {
+            assert(dot == std::string_view::npos);
+            dot = value.size();
+        }
+
+        uint32_t part = parse_number<uint32_t>(value.substr(start, dot - start));
+        assert(part <= 255);
+        parts[i] = part;
+        start = dot + 1;
+    }
+
+    return (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3];
+}
+
 struct message {
     char message[256];
+};
+
+struct TrackerResponse {
+
 };
 
 // cot::task<bool> send(struct message message) {
@@ -38,7 +82,7 @@ cot::task<> run_server() {
             break;                                 // peer closed or parse error
         }
         cot::http_message res;
-        
+
         // https://stackoverflow.com/a/650307
         // interesting idea for later
         // switch (req.url()) {
@@ -51,7 +95,7 @@ cot::task<> run_server() {
         std::string_view url = req.path();
         std::cout << url << "url read\n" << std::endl;
 
-        bt_tracker_announce_request bt_req;
+        bt_tracker_announce_request bt_req{};
 
         if (url == "/announce") {
 
@@ -64,14 +108,56 @@ cot::task<> run_server() {
                 std::cout << name << " and " << value << std::endl;
 
                 if (name == "info_hash") {
-                    // this can probably be its own helper function
-                    if (sizeof(bt_req.info_hash) != value.size())
-                        assert(false); // handle this properly eventually
 
-                    memcpy(bt_req.info_hash, value.data(), sizeof(bt_req.info_hash));
+                    copy_exact(bt_req.info_hash, value);
+
                 } else if (name == "peer_id") {
 
+                    copy_exact(bt_req.peer_id, value);
+
                 } else if (name == "ip") {
+
+                    bt_req.ip = parse_ipv4(value);
+
+                } else if (name == "port") {
+                    
+                    bt_req.port = parse_number<uint16_t>(value);
+
+                } else if (name == "uploaded") {
+
+                    bt_req.uploaded = parse_number<uint64_t>(value);
+
+                } else if (name == "downloaded") {
+
+                    bt_req.downloaded = parse_number<uint64_t>(value);
+
+                } else if (name == "left") {
+
+                    bt_req.left = parse_number<uint64_t>(value);
+
+                } else if (name == "event") {
+
+                    if (value == "started") {
+
+                        bt_req.event = started;
+
+                    } else if (value == "stopped") {
+
+                        bt_req.event = stopped;
+
+                    } else if (value == "completed") {
+
+                        bt_req.event = completed;
+
+                    } else {
+
+                        assert(false);
+
+                    }
+
+                } else if (name == "numwant") {
+
+                    bt_req.numwant = parse_number<int32_t>(value);
 
                 } else {
 
@@ -81,7 +167,7 @@ cot::task<> run_server() {
 
             res.status_code(200)
                 .header("Content-Type", "text/plain")
-                .body(std::format("Success!"));
+                .body();
         } else {
             res.status_code(404)
                 .header("Content-Type", "text/plain")
