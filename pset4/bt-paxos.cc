@@ -1,6 +1,7 @@
 #include <algorithm>
 #include "bittorrent.hh"
 #include "cotamer/http.hh"
+#include "bencode.h"
 #include "cotamer/cotamer.hh"
 #include <libgen.h>
 #include <cstdio>

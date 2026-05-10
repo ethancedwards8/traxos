@@ -12,6 +12,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/..
+    ${CMAKE_CURRENT_SOURCE_DIR}/../bencode
     ${CMAKE_CURRENT_SOURCE_DIR}/../cotamer
 )
 add_compile_options(-g -O3 -W -Wall)
@@ -128,16 +129,31 @@ add_library(Cotamer OBJECT
     ../cotamer/cotamer/io.cc
 )
 
+set_source_files_properties(
+    ../bencode/bencode.c
+    PROPERTIES
+        LANGUAGE CXX
+        COMPILE_OPTIONS "-x;c++"
+)
+add_library(Bencode OBJECT
+    ../bencode/bencode.c
+)
+target_include_directories(Bencode PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/../bencode
+)
+
 add_executable(server
     bt-paxos.cc
     $<TARGET_OBJECTS:Cotamer>
     $<TARGET_OBJECTS:CotamerHttp>
+    $<TARGET_OBJECTS:Bencode>
 )
 
 add_executable(client
     bt-paxos.cc
     $<TARGET_OBJECTS:Cotamer>
     $<TARGET_OBJECTS:CotamerHttp>
+    $<TARGET_OBJECTS:Bencode>
 )
 
 if(COTAMER_HAVE_LLHTTP)
