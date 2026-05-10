@@ -23,35 +23,46 @@ using namespace std::chrono_literals;
 
 // https://stackoverflow.com/questions/9443957/using-sizeof-on-arrays-passed-as-parameters
 template <typename T>
-T parse_number(std::string_view value) {
+std::optional<T> parse_number(std::string_view value) {
     T result{};
     auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), result);
-    assert(ec == std::errc() && ptr == value.data() + value.size());
+    if (ec != std::errc() || ptr != value.data() + value.size()) {
+        return std::nullopt;
+    }
     return result;
 }
 
 template <size_t N>
-void copy_exact(char (&field)[N], std::string_view value) {
-    assert(value.size() == N);
+bool copy_exact(char (&field)[N], std::string_view value) {
+    if (value.size() != N) {
+        return false;
+    }
     memcpy(field, value.data(), N);
+    return true;
 }
 
-uint32_t parse_ipv4(std::string_view value) {
+std::optional<uint32_t> parse_ipv4(std::string_view value) {
     uint32_t parts[4];
     size_t start = 0;
 
     for (int i = 0; i != 4; ++i) {
         size_t dot = value.find('.', start);
         if (i != 3) {
-            assert(dot != std::string_view::npos);
+            if (dot == std::string_view::npos) {
+                return std::nullopt;
+            }
         } else {
-            assert(dot == std::string_view::npos);
+            if (dot != std::string_view::npos) {
+                return std::nullopt;
+            }
             dot = value.size();
         }
 
-        uint32_t part = parse_number<uint32_t>(value.substr(start, dot - start));
-        assert(part <= 255);
-        parts[i] = part;
+        auto part = parse_number<uint32_t>(value.substr(start, dot - start));
+        if (!part || *part > 255) {
+            return std::nullopt;
+        }
+        parts[i] = *part;
         start = dot + 1;
     }
 
@@ -96,6 +107,7 @@ cot::task<> run_server() {
         std::cout << url << "url read\n" << std::endl;
 
         bt_tracker_announce_request bt_req{};
+        std::string failure;
 
         if (url == "/announce") {
 
@@ -109,31 +121,60 @@ cot::task<> run_server() {
 
                 if (name == "info_hash") {
 
-                    copy_exact(bt_req.info_hash, value);
+                    if (!copy_exact(bt_req.info_hash, value)) {
+                        failure = "invalid info_hash";
+                    }
 
                 } else if (name == "peer_id") {
 
-                    copy_exact(bt_req.peer_id, value);
+                    if (!copy_exact(bt_req.peer_id, value)) {
+                        failure = "invalid peer_id";
+                    }
 
                 } else if (name == "ip") {
 
-                    bt_req.ip = parse_ipv4(value);
+                    auto ip = parse_ipv4(value);
+                    if (!ip) {
+                        failure = "invalid ip";
+                    } else {
+                        bt_req.ip = *ip;
+                    }
 
                 } else if (name == "port") {
                     
-                    bt_req.port = parse_number<uint16_t>(value);
+                    auto port = parse_number<uint16_t>(value);
+                    if (!port) {
+                        failure = "invalid port";
+                    } else {
+                        bt_req.port = *port;
+                    }
 
                 } else if (name == "uploaded") {
 
-                    bt_req.uploaded = parse_number<uint64_t>(value);
+                    auto uploaded = parse_number<uint64_t>(value);
+                    if (!uploaded) {
+                        failure = "invalid uploaded";
+                    } else {
+                        bt_req.uploaded = *uploaded;
+                    }
 
                 } else if (name == "downloaded") {
 
-                    bt_req.downloaded = parse_number<uint64_t>(value);
+                    auto downloaded = parse_number<uint64_t>(value);
+                    if (!downloaded) {
+                        failure = "invalid downloaded";
+                    } else {
+                        bt_req.downloaded = *downloaded;
+                    }
 
                 } else if (name == "left") {
 
-                    bt_req.left = parse_number<uint64_t>(value);
+                    auto left = parse_number<uint64_t>(value);
+                    if (!left) {
+                        failure = "invalid left";
+                    } else {
+                        bt_req.left = *left;
+                    }
 
                 } else if (name == "event") {
 
@@ -151,29 +192,38 @@ cot::task<> run_server() {
 
                     } else {
 
-                        assert(false);
+                        failure = "invalid event";
 
                     }
 
                 } else if (name == "numwant") {
 
-                    bt_req.numwant = parse_number<int32_t>(value);
+                    auto numwant = parse_number<int32_t>(value);
+                    if (!numwant) {
+                        failure = "invalid numwant";
+                    } else {
+                        bt_req.numwant = *numwant;
+                    }
 
                 } else {
 
                 }
             }
 
-
-            res.status_code(200)
-                .header("Content-Type", "text/plain")
-                .body();
+            if (!failure.empty()) {
+                res.status_code(200)
+                    .header("Content-Type", "text/plain")
+                    .body(failure);
+            } else {
+                res.status_code(200)
+                    .header("Content-Type", "text/plain")
+                    .body();
+            }
         } else {
             res.status_code(404)
                 .header("Content-Type", "text/plain")
                 .body(std::format("you asked for {}\n", req.url()));
         }
-        
         co_await hp.send(std::move(res));
     } while (hp.should_keep_alive());
 }
