@@ -42,31 +42,29 @@ bool copy_exact(char (&field)[N], std::string_view value) {
 }
 
 std::optional<uint32_t> parse_ipv4(std::string_view value) {
-    uint32_t parts[4];
+    std::string dotted(value);
+    dotted += "."; // hack
+
+    uint32_t ip = 0;
     size_t start = 0;
 
     for (int i = 0; i != 4; ++i) {
-        size_t dot = value.find('.', start);
-        if (i != 3) {
-            if (dot == std::string_view::npos) {
-                return std::nullopt;
-            }
-        } else {
-            if (dot != std::string_view::npos) {
-                return std::nullopt;
-            }
-            dot = value.size();
-        }
+        size_t dot = dotted.find('.', start);
 
-        auto part = parse_number<uint32_t>(value.substr(start, dot - start));
+        auto part = parse_number<uint32_t>(std::string_view(dotted).substr(start, dot - start));
         if (!part || *part > 255) {
             return std::nullopt;
         }
-        parts[i] = *part;
+
+        ip = (ip << 8) | *part;
         start = dot + 1;
     }
 
-    return (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3];
+    if (start != dotted.size()) {
+        return std::nullopt;
+    }
+
+    return ip;
 }
 
 struct message {
@@ -80,6 +78,108 @@ struct TrackerResponse {
 // cot::task<bool> send(struct message message) {
 
 // }
+
+void parse_announce_request(cot::http_message& req,
+                            bt_tracker_announce_request& bt_req,
+                            std::string& failure) {
+    for (auto it = req.search_param_begin(); it != req.search_param_end(); it++) {
+        std::string_view name(it.name());
+        // live laugh love c++
+        std::string value(it.value());
+
+        std::cout << name << " and " << value << std::endl;
+
+        if (name == "info_hash") {
+
+            if (!copy_exact(bt_req.info_hash, value)) {
+                failure = "invalid info_hash";
+            }
+
+        } else if (name == "peer_id") {
+
+            if (!copy_exact(bt_req.peer_id, value)) {
+                failure = "invalid peer_id";
+            }
+
+        } else if (name == "ip") {
+
+            auto ip = parse_ipv4(value);
+            if (!ip) {
+                failure = "invalid ip";
+            } else {
+                bt_req.ip = *ip;
+            }
+
+        } else if (name == "port") {
+
+            auto port = parse_number<uint16_t>(value);
+            if (!port) {
+                failure = "invalid port";
+            } else {
+                bt_req.port = *port;
+            }
+
+        } else if (name == "uploaded") {
+
+            auto uploaded = parse_number<uint64_t>(value);
+            if (!uploaded) {
+                failure = "invalid uploaded";
+            } else {
+                bt_req.uploaded = *uploaded;
+            }
+
+        } else if (name == "downloaded") {
+
+            auto downloaded = parse_number<uint64_t>(value);
+            if (!downloaded) {
+                failure = "invalid downloaded";
+            } else {
+                bt_req.downloaded = *downloaded;
+            }
+
+        } else if (name == "left") {
+
+            auto left = parse_number<uint64_t>(value);
+            if (!left) {
+                failure = "invalid left";
+            } else {
+                bt_req.left = *left;
+            }
+
+        } else if (name == "event") {
+
+            if (value == "started") {
+
+                bt_req.event = started;
+
+            } else if (value == "stopped") {
+
+                bt_req.event = stopped;
+
+            } else if (value == "completed") {
+
+                bt_req.event = completed;
+
+            } else {
+
+                failure = "invalid event";
+
+            }
+
+        } else if (name == "numwant") {
+
+            auto numwant = parse_number<int32_t>(value);
+            if (!numwant) {
+                failure = "invalid numwant";
+            } else {
+                bt_req.numwant = *numwant;
+            }
+
+        } else {
+
+        }
+    }
+}
 
 cot::task<> run_server() {
     printf("Running the server\n");
@@ -111,104 +211,7 @@ cot::task<> run_server() {
 
         if (url == "/announce") {
 
-
-            for (auto it = req.search_param_begin(); it != req.search_param_end(); it++) {
-                std::string_view name(it.name());
-                // live laugh love c++
-                std::string value(it.value());
-
-                std::cout << name << " and " << value << std::endl;
-
-                if (name == "info_hash") {
-
-                    if (!copy_exact(bt_req.info_hash, value)) {
-                        failure = "invalid info_hash";
-                    }
-
-                } else if (name == "peer_id") {
-
-                    if (!copy_exact(bt_req.peer_id, value)) {
-                        failure = "invalid peer_id";
-                    }
-
-                } else if (name == "ip") {
-
-                    auto ip = parse_ipv4(value);
-                    if (!ip) {
-                        failure = "invalid ip";
-                    } else {
-                        bt_req.ip = *ip;
-                    }
-
-                } else if (name == "port") {
-                    
-                    auto port = parse_number<uint16_t>(value);
-                    if (!port) {
-                        failure = "invalid port";
-                    } else {
-                        bt_req.port = *port;
-                    }
-
-                } else if (name == "uploaded") {
-
-                    auto uploaded = parse_number<uint64_t>(value);
-                    if (!uploaded) {
-                        failure = "invalid uploaded";
-                    } else {
-                        bt_req.uploaded = *uploaded;
-                    }
-
-                } else if (name == "downloaded") {
-
-                    auto downloaded = parse_number<uint64_t>(value);
-                    if (!downloaded) {
-                        failure = "invalid downloaded";
-                    } else {
-                        bt_req.downloaded = *downloaded;
-                    }
-
-                } else if (name == "left") {
-
-                    auto left = parse_number<uint64_t>(value);
-                    if (!left) {
-                        failure = "invalid left";
-                    } else {
-                        bt_req.left = *left;
-                    }
-
-                } else if (name == "event") {
-
-                    if (value == "started") {
-
-                        bt_req.event = started;
-
-                    } else if (value == "stopped") {
-
-                        bt_req.event = stopped;
-
-                    } else if (value == "completed") {
-
-                        bt_req.event = completed;
-
-                    } else {
-
-                        failure = "invalid event";
-
-                    }
-
-                } else if (name == "numwant") {
-
-                    auto numwant = parse_number<int32_t>(value);
-                    if (!numwant) {
-                        failure = "invalid numwant";
-                    } else {
-                        bt_req.numwant = *numwant;
-                    }
-
-                } else {
-
-                }
-            }
+            parse_announce_request(req, bt_req, failure);
 
             if (!failure.empty()) {
                 res.status_code(200)
