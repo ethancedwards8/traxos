@@ -22,6 +22,23 @@
               cmake
               llvmPackages.clang
               mktorrent
+              transmission_4
+
+              (buildGoModule {
+                  pname = "torrent-client";
+                  version = "0.1.0";
+
+                  src = fetchFromGitHub {
+                      owner = "veggiedefender";
+                      repo = "torrent-client";
+                      rev = "e0f58e0b16e4a9d1bd889f8cb61d835b8ec13385";
+                      hash = "sha256-bNgpu3cAuYhTTwIb9eaw92TijIIVSDH6qwsl4eBb7lM=";
+                  };
+
+                  vendorHash = "sha256-gsCUXahsTf2OUT8o/sxr3pLv3tosSGS3FvM10CRFJoQ=";
+
+                  doCheck = false;
+              })
 
               (stdenv.mkDerivation {
                   pname = "tnt";

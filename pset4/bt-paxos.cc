@@ -90,7 +90,7 @@ std::string format_ipv4(uint32_t ip) {
                        ip & 0xff);
 }
 
-https://stackoverflow.com/questions/20472072/c-socket-get-ip-address-from-filedescriptor-returned-from-accept
+// https://stackoverflow.com/questions/20472072/c-socket-get-ip-address-from-filedescriptor-returned-from-accept
 std::optional<uint32_t> peer_ipv4(cot::fd& cfd) {
     sockaddr_in addr{};
     socklen_t addrlen = sizeof(addr);
@@ -123,7 +123,7 @@ void parse_announce_request(cot::http_message& req,
                 failure = "invalid peer_id";
             }
 
-        } else if (name == "ip") {
+        } else if (name == "ip" || name == "ipv4") {
 
             auto ip = parse_ipv4(value);
             if (!ip) {
