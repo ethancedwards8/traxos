@@ -123,7 +123,7 @@ void parse_announce_request(cot::http_message& req,
                 failure = "invalid peer_id";
             }
 
-        } else if (name == "ip" || name == "ipv4") {
+        } else if (name == "ip") {
 
             auto ip = parse_ipv4(value);
             if (!ip) {
