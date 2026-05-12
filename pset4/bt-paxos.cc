@@ -318,28 +318,26 @@ cot::task<> handle_connection(cot::fd cfd, bt_tracker_state& tracker_state) {
             if (!failure.empty()) {
                 res.status_code(200)
                     .header("Content-Type", "text/plain")
-                    .header("Connection", "close")
                     .body(failure);
             } else {
                 apply_announce(tracker_state, bt_req);
+                std::string body = tracker_success_response(tracker_state, bt_req);
+                std::cout << "announce response " << body << std::endl;
 
                 res.status_code(200)
                     .header("Content-Type", "text/plain")
-                    .header("Connection", "close")
-                    .body(tracker_success_response(tracker_state, bt_req));
+                    .body(body);
             }
 
 
         } else if (url == "/debug") {
             res.status_code(200)
                 .header("Content-Type", "text/plain")
-                .header("Connection", "close")
                 .body(tracker_debug_response(tracker_state));
 
         } else {
             res.status_code(404)
                 .header("Content-Type", "text/plain")
-                .header("Connection", "close")
                 .body(std::format("you asked for {}, but probably want /announce instead\n", req.url()));
         }
         co_await hp.send(std::move(res));
