@@ -15,6 +15,9 @@
 #include <print>
 #include <random>
 #include <string_view>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 
 #define MAXLEN 256;
 
@@ -85,6 +88,17 @@ std::string format_ipv4(uint32_t ip) {
                        (ip >> 16) & 0xff,
                        (ip >> 8) & 0xff,
                        ip & 0xff);
+}
+
+https://stackoverflow.com/questions/20472072/c-socket-get-ip-address-from-filedescriptor-returned-from-accept
+std::optional<uint32_t> peer_ipv4(cot::fd& cfd) {
+    sockaddr_in addr{};
+    socklen_t addrlen = sizeof(addr);
+    if (getpeername(cfd.fileno(), reinterpret_cast<sockaddr*>(&addr), &addrlen) < 0
+        || addr.sin_family != AF_INET) {
+        return std::nullopt;
+    }
+    return ntohl(addr.sin_addr.s_addr);
 }
 
 void parse_announce_request(cot::http_message& req,
@@ -239,6 +253,7 @@ std::string tracker_success_response(const bt_tracker_state& state,
 }
 
 cot::task<> handle_connection(cot::fd cfd, bt_tracker_state& tracker_state) {
+    std::optional<uint32_t> connection_ip = peer_ipv4(cfd);
     cot::http_parser hp(std::move(cfd), cot::http_parser::server);
     do {
         cot::http_message req = co_await hp.receive();
@@ -265,6 +280,9 @@ cot::task<> handle_connection(cot::fd cfd, bt_tracker_state& tracker_state) {
         if (url == "/announce") {
 
             parse_announce_request(req, bt_req, failure);
+            if (bt_req.ip == 0 && connection_ip) {
+                bt_req.ip = *connection_ip;
+            }
 
             if (!failure.empty()) {
                 res.status_code(200)

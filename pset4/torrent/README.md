@@ -60,4 +60,10 @@ i realized i wasn't properly doing the url encoding. ew.
 anyways I'm using curl to test my implementation thus far.
 curl "http://127.0.0.1:9000/announce?info_hash=2%5DI%01%A2j%88C-%3E%20%C0l%5D%3B%7C%05%0B%A9%B3&peer_id=ABCDEFGHIJKLMNOPQRST&ip=216.234.197.127&port=6881&downloaded=1234&left=98765&event=started"
 
-to test the full support, i ran multiple clients of tnt across my homelab network.
+to test the full support, i ran multiple clients of tnt across my homelab network
+
+then i realized that some clients (tnt namely) don't actually supply the peer_id in the announce but instead
+assume that the tracker server takes it implicitly from the tcp connection. i guess this makes sense from
+a security perspective/dos because its probably much harder to make tcp lie than just passing a fake ip
+
+
