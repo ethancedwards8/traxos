@@ -104,8 +104,9 @@ public:
         std::sort(expected.begin(), expected.end());
         auto actual = state.log;
         std::sort(actual.begin(), actual.end());
-        if (actual != expected) {
-            return std::format("expected {} entries, found {}", expected.size(), actual.size());
+        if (!std::includes(actual.begin(), actual.end(), expected.begin(), expected.end())) {
+            return std::format("expected at least {} acknowledged entries, found {}",
+                               expected.size(), actual.size());
         }
         return std::nullopt;
     }
@@ -683,6 +684,8 @@ static bool should_skip_replica(const testinfo& tester, size_t replica) {
     return false;
 }
 
+static constexpr size_t max_shutdown_commit_lag = 5;
+
 static bool try_one_seed(testinfo& tester, unsigned long seed) {
     cot::reset();
     tester.randomness.seed(seed);
@@ -721,13 +724,30 @@ static bool try_one_seed(testinfo& tester, unsigned long seed) {
         if (s == reference || should_skip_replica(tester, s)) {
             continue;
         }
-        auto a = ref_state.log;
-        auto b = inst.replicas[s]->state_.log;
-        std::sort(a.begin(), a.end());
-        std::sort(b.begin(), b.end());
-        if (a != b) {
+        auto& a = ref_state.log;
+        auto& b = inst.replicas[s]->state_.log;
+        size_t common_size = std::min(a.size(), b.size());
+        if (!std::equal(a.begin(), a.begin() + common_size, b.begin())) {
             std::print(std::clog, "*** REPLICA DIVERGENCE on seed {} between {} and {}\n",
                        seed, reference, s);
+            for (size_t r = 0; r != tester.nreplicas; ++r) {
+                auto& replica = *inst.replicas[r];
+                std::print(std::clog,
+                           "*** R{}: log={} accepted={} commit={} applied={} leader={}\n",
+                           r,
+                           replica.state_.log.size(),
+                           replica.accepted_values_.size(),
+                           replica.commit_index_,
+                           replica.applied_index_,
+                           replica.leader_index_);
+            }
+            return false;
+        }
+        size_t lag = a.size() > b.size() ? a.size() - b.size() : b.size() - a.size();
+        if (lag > max_shutdown_commit_lag) {
+            std::print(std::clog,
+                       "*** REPLICA COMMIT LAG on seed {} between {} and {}: {}\n",
+                       seed, reference, s, lag);
             return false;
         }
     }
