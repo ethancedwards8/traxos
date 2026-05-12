@@ -234,7 +234,7 @@ std::string tracker_success_response(const bt_tracker_state& state,
             ++count;
         }
     }
-    body += "e";
+    body += "ee";
     return body;
 }
 
@@ -289,9 +289,9 @@ cot::task<> handle_connection(cot::fd cfd, bt_tracker_state& tracker_state) {
 }
 
 cot::task<> run_server() {
-    printf("Running the server on 127.0.0.1:9000\n");
+    printf("Running the server on 0.0.0.0:9000\n");
     bt_tracker_state tracker_state;
-    cot::fd lfd = co_await cot::tcp_listen("127.0.0.1:9000");
+    cot::fd lfd = co_await cot::tcp_listen("0.0.0.0:9000");
 
     while (true) {
         cot::fd cfd = co_await cot::tcp_accept(lfd);
