@@ -142,9 +142,23 @@ target_include_directories(Bencode PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../bencode
 )
 
+add_library(Pancy OBJECT
+    pancydb.cc
+    client_model.cc
+    lockseq_model.cc
+    utils.cc
+)
+
+add_executable(pt-paxos
+    pt-paxos.cc
+    $<TARGET_OBJECTS:Cotamer>
+    $<TARGET_OBJECTS:Pancy>
+)
+
 add_executable(server
-    bt-paxos.cc
+    tracker.cc
     tracker/http.cc
+    tracker/messages.cc
     tracker/state.cc
     $<TARGET_OBJECTS:Cotamer>
     $<TARGET_OBJECTS:CotamerHttp>
@@ -152,8 +166,9 @@ add_executable(server
 )
 
 add_executable(client
-    bt-paxos.cc
+    tracker.cc
     tracker/http.cc
+    tracker/messages.cc
     tracker/state.cc
     $<TARGET_OBJECTS:Cotamer>
     $<TARGET_OBJECTS:CotamerHttp>
