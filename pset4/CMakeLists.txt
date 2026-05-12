@@ -144,6 +144,8 @@ target_include_directories(Bencode PUBLIC
 
 add_executable(server
     bt-paxos.cc
+    tracker/http.cc
+    tracker/state.cc
     $<TARGET_OBJECTS:Cotamer>
     $<TARGET_OBJECTS:CotamerHttp>
     $<TARGET_OBJECTS:Bencode>
@@ -151,6 +153,8 @@ add_executable(server
 
 add_executable(client
     bt-paxos.cc
+    tracker/http.cc
+    tracker/state.cc
     $<TARGET_OBJECTS:Cotamer>
     $<TARGET_OBJECTS:CotamerHttp>
     $<TARGET_OBJECTS:Bencode>
