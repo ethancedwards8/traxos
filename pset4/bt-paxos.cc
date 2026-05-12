@@ -79,17 +79,13 @@ std::optional<uint32_t> parse_ipv4(std::string_view value) {
     return ip;
 }
 
-struct message {
-    char message[256];
-};
-
-struct TrackerResponse {
-
-};
-
-// cot::task<bool> send(struct message message) {
-
-// }
+std::string format_ipv4(uint32_t ip) {
+    return std::format("{}.{}.{}.{}",
+                       (ip >> 24) & 0xff,
+                       (ip >> 16) & 0xff,
+                       (ip >> 8) & 0xff,
+                       ip & 0xff);
+}
 
 void parse_announce_request(cot::http_message& req,
                             bt_tracker_announce_request& bt_req,
@@ -216,12 +212,33 @@ void apply_announce(bt_tracker_state& state, const bt_tracker_announce_request& 
     peers[peer_id] = peer;
 }
 
-cot::task<> run_server() {
-    printf("Running the server\n");
-    bt_tracker_state tracker_state;
-    cot::fd lfd = co_await cot::tcp_listen("127.0.0.1:9000");
-    cot::fd cfd = co_await cot::tcp_accept(lfd);
+std::string tracker_success_response(const bt_tracker_state& state,
+                                     const bt_tracker_announce_request& bt_req) {
+    bt_info_hash info_hash = make_info_hash(bt_req.info_hash);
+    auto torrent = state.torrents.find(info_hash);
 
+    std::string body = "d8:intervali900e5:peersl";
+    if (torrent != state.torrents.end()) {
+        int32_t count = 0;
+        for (auto& [peer_id, peer] : torrent->second) {
+            // own peer doesn't need to be in peer list
+            if (peer_id == make_peer_id(bt_req.peer_id)) {
+                continue;
+            }
+            if (count == bt_req.numwant) {
+                break;
+            }
+
+            std::string ip = format_ipv4(peer.ip);
+            body += std::format("d2:ip{}:{}4:porti{}ee", ip.size(), ip, peer.port);
+            ++count;
+        }
+    }
+    body += "e";
+    return body;
+}
+
+cot::task<> handle_connection(cot::fd cfd, bt_tracker_state& tracker_state) {
     cot::http_parser hp(std::move(cfd), cot::http_parser::server);
     do {
         cot::http_message req = co_await hp.receive();
@@ -258,15 +275,28 @@ cot::task<> run_server() {
 
                 res.status_code(200)
                     .header("Content-Type", "text/plain")
-                    .body();
+                    .body(tracker_success_response(tracker_state, bt_req));
             }
+
+
         } else {
             res.status_code(404)
                 .header("Content-Type", "text/plain")
-                .body(std::format("you asked for {}\n", req.url()));
+                .body(std::format("you asked for {}, but probably want /announce instead\n", req.url()));
         }
         co_await hp.send(std::move(res));
     } while (hp.should_keep_alive());
+}
+
+cot::task<> run_server() {
+    printf("Running the server on 127.0.0.1:9000\n");
+    bt_tracker_state tracker_state;
+    cot::fd lfd = co_await cot::tcp_listen("127.0.0.1:9000");
+
+    while (true) {
+        cot::fd cfd = co_await cot::tcp_accept(lfd);
+        handle_connection(std::move(cfd), tracker_state).detach();
+    }
 }
 
 
