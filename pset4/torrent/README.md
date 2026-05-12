@@ -66,4 +66,52 @@ then i realized that some clients (tnt namely) don't actually supply the peer_id
 assume that the tracker server takes it implicitly from the tcp connection. i guess this makes sense from
 a security perspective/dos because its probably much harder to make tcp lie than just passing a fake ip
 
+## BUGGG!!!!!!!! bane of my existence
 
+so
+
+while testing that the tracker was working and that peers could auto-discover each other, here's a list of
+the issues i encountered and how i debugged them:
+
+
+1. added a /debug endpoint to my tracker server to see extra info:
+  curl http://10.0.20.236:9000/debug
+  torrents: 1
+  info_hash 45d84be32728d481a0895c1056554f0dc41f63b3 peers: 2
+    peer_id 2d5452343131302d37353969347a6b3239387875 ip 10.0.20.227 port 51413 left 69083 complete no
+    peer_id 2d5452343131302d7170797470366f39716b7876 ip 10.0.10.175 port 51413 left 69083 complete no
+
+2. double checked that the torrent file was valid, multiple times
+    transmission-show pset4/torrent/cs61hello.jpg.torrent
+
+3. Checked whether Transmission was really seeding:
+    i learned that transmission can just hid files on your filesystem and seed them unless you
+    restore old resume state unless run with a fresh -g config dir. [1.00] means complete; [0.00] means incomplete,
+    even though the cli confusingly still prints “Seeding”.
+5. Verified the exact tracker response sent to tnt:
+    temporarily logged the announce response body. For tnt, the tracker sent:
+
+d8:intervali900e5:peersld2:ip11:10.0.20.2274:porti51413eeee
+
+That is valid bencode and includes the Transmission seeder. but tnt DIDN'T LIKE IT. i don't know why
+
+6. Compared with Debian:
+    Debian also returns peers as a list of dictionaries, not compact bytes, so our response shape was not obviously wrong.
+7. Tried Connection: close:
+    Debian sends Connection: Close header. so tried adding it. tnt then failed with Socket is closed, sooo idk whats going on here.
+    
+8. Checked network reachability:
+    nc showed the seeder port could be reachable from the relevant machines, so basic TCP routing/firewall was not the main issue.
+
+9. Used tcpdump:
+    On the Transmission seeder, i watched for TCP from tnt to 51413. Nothing appeared. only saw UDP from Transmission to tnt:
+    tcpdump: data link type PKTAP
+tcpdump: verbose output suppressed, use -v[v]... for full protocol decode
+listening on any, link-type PKTAP (Apple DLT_PKTAP), snapshot length 524288 bytes
+04:48:56.154903 IP 10.0.20.227.51413 > 10.0.10.175.6881: UDP, length 20
+04:48:59.606183 IP 10.0.20.227.51413 > 10.0.10.175.6881: UDP, length 20
+04:49:05.854798 IP 10.0.20.227.51413 > 10.0.10.175.6881: UDP, length 20
+
+
+Conclusion: the tracker gave tnt a valid seeder, but tnt never attempted the TCP peer connection. that means tnt was BAD! and i don't care
+enough to fix it. transmission works. i trust its right.
