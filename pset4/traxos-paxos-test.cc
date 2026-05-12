@@ -7,6 +7,7 @@
 #include <deque>
 #include <format>
 #include <getopt.h>
+#include <cstring>
 #include <iostream>
 #include <optional>
 #include <print>
@@ -94,11 +95,12 @@ public:
         running_ = false;
     }
 
-    std::optional<std::string> check(const dummy_state& state) const {
-        std::vector<std::pair<unsigned, unsigned>> expected;
+    std::optional<std::string> check(const tracker_state_machine& state) const {
+        std::vector<uint64_t> expected;
         for (size_t cid = 0; cid != acknowledged_.size(); ++cid) {
-            for (unsigned v = 0; v != acknowledged_[cid]; ++v) {
-                expected.emplace_back(cid, v);
+            for (uint64_t serial = cid + serial_step; serial <= acknowledged_[cid];
+                 serial += serial_step) {
+                expected.push_back(serial);
             }
         }
         std::sort(expected.begin(), expected.end());
@@ -121,8 +123,8 @@ private:
     std::vector<cot::event> client_events_;
     std::vector<cot::task<>> tasks_;
     cot::task<> receive_task_;
-    std::vector<unsigned> acknowledged_;
-    size_t nclients_ = 32;
+    std::vector<uint64_t> acknowledged_;
+    size_t nclients_ = 8;
     bool running_ = false;
 
     static constexpr size_t max_clients = 4096;
@@ -136,6 +138,38 @@ private:
 
     size_t random_replica() {
         return randomness_.uniform(size_t(0), out_.size() - 1);
+    }
+
+    static void fill_bytes(char (&out)[20], unsigned first, unsigned second, char tag) {
+        std::string bytes = std::format("{:04x}{:04x}{}tracker", first, second, tag);
+        bytes.resize(20, tag);
+        memcpy(out, bytes.data(), 20);
+    }
+
+    request make_announce(uint64_t serial, unsigned cid, unsigned value) const {
+        bt_tracker_announce_request announce{};
+        unsigned torrent = cid % 4;
+        unsigned lifecycle_step = value % 4;
+        unsigned lifecycle_generation = value / 4;
+        fill_bytes(announce.info_hash, torrent, 0, 't');
+        fill_bytes(announce.peer_id, cid, lifecycle_generation, 'p');
+        announce.ip = (10U << 24) | (0U << 16) | (static_cast<uint32_t>(cid & 0xff) << 8)
+            | static_cast<uint32_t>((value % 254) + 1);
+        announce.port = static_cast<uint16_t>(6881 + (cid % 1000));
+        announce.uploaded = value * 1024;
+        announce.downloaded = lifecycle_step * 1024;
+        if (lifecycle_step == 2) {
+            announce.left = 0;
+            announce.event = completed;
+        } else if (lifecycle_step == 3) {
+            announce.left = 0;
+            announce.event = stopped;
+        } else {
+            announce.left = 4096 - lifecycle_step * 1024;
+            announce.event = started;
+        }
+        announce.numwant = 50;
+        return {serial, announce};
     }
 
     cot::task<> receive_loop() {
@@ -181,9 +215,13 @@ private:
         uint64_t serial = cid;
         unsigned value = 0;
         while (running_) {
-            co_await cot::after(randomness_.normal(500ms, 100ms));
+            if (value % 4 == 0) {
+                co_await cot::after(randomness_.normal(500ms, 100ms));
+            } else {
+                co_await cot::after(1ms);
+            }
             serial += serial_step;
-            request req{serial, cid, value};
+            request req = make_announce(serial, cid, value);
 
             for (unsigned tries = 0; true; ++tries) {
                 co_await out_[leader]->send(req);
@@ -195,7 +233,7 @@ private:
                     leader = tries % 3 == 2 ? random_replica() : leader;
                     continue;
                 }
-                acknowledged_[cid] = value + 1;
+                acknowledged_[cid] = serial;
                 ++value;
                 ++complete;
                 break;
@@ -220,7 +258,7 @@ struct replica {
     netsim::port<paxos_message> from_replicas_;
     netsim::channel<response> to_clients_;
     std::vector<std::unique_ptr<netsim::channel<paxos_message>>> to_replicas_;
-    dummy_state state_;
+    tracker_state_machine state_;
 
     unsigned long long next_round_ = 1;
     unsigned long long promised_round_ = 0;
@@ -558,7 +596,7 @@ cot::task<> replica::run_as_follower() {
 
         auto* req = std::get_if<request>(&msg);
         if (req) {
-            co_await to_clients_.send(response{message_serial(*req), true, leader_index_});
+            co_await to_clients_.send(response{message_serial(*req), true, leader_index_, {}});
             continue;
         }
 
@@ -708,11 +746,16 @@ static bool try_one_seed(testinfo& tester, unsigned long seed) {
     cot::task<> timeout_task = stop_clients_and_clear_after(clients, 20s, 5s);
     cot::loop();
 
-    std::print("{} appended\n", clients.complete);
-
-    size_t reference = 0;
-    while (reference < tester.nreplicas && should_skip_replica(tester, reference)) {
-        ++reference;
+    size_t reference = tester.nreplicas;
+    for (size_t s = 0; s != tester.nreplicas; ++s) {
+        if (should_skip_replica(tester, s)) {
+            continue;
+        }
+        if (reference == tester.nreplicas
+            || inst.replicas[s]->state_.log.size()
+                > inst.replicas[reference]->state_.log.size()) {
+            reference = s;
+        }
     }
     if (reference == tester.nreplicas) {
         std::print(std::clog, "*** no live reference replica on seed {}\n", seed);
@@ -720,6 +763,11 @@ static bool try_one_seed(testinfo& tester, unsigned long seed) {
     }
 
     auto& ref_state = inst.replicas[reference]->state_;
+    std::print("{} announce: {} started, {} completed, {} stopped\n",
+               ref_state.log.size(),
+               ref_state.started_count,
+               ref_state.completed_count,
+               ref_state.stopped_count);
     for (size_t s = 0; s != tester.nreplicas; ++s) {
         if (s == reference || should_skip_replica(tester, s)) {
             continue;

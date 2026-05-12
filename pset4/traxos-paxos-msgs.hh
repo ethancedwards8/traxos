@@ -1,21 +1,23 @@
 #pragma once
 
+#include "tracker-state.hh"
 #include <cstdint>
 #include <deque>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
 
 struct request {
     uint64_t serial;
-    unsigned client = 0;
-    unsigned value = 0;
+    bt_tracker_announce_request announce;
 };
 
 struct response {
     uint64_t serial;
     bool redirect = false;
     size_t redirection = 0;
+    std::string body;
 };
 
 inline uint64_t message_serial(const request& req) {
@@ -26,12 +28,24 @@ inline uint64_t message_serial(const response& resp) {
     return resp.serial;
 }
 
-struct dummy_state {
-    std::vector<std::pair<unsigned, unsigned>> log;
+struct tracker_state_machine {
+    bt_tracker_state tracker;
+    std::vector<uint64_t> log;
+    unsigned long started_count = 0;
+    unsigned long stopped_count = 0;
+    unsigned long completed_count = 0;
 
     response process(const request& req) {
-        log.emplace_back(req.client, req.value);
-        return {req.serial};
+        apply_announce(tracker, req.announce);
+        log.push_back(req.serial);
+        if (req.announce.event == started) {
+            ++started_count;
+        } else if (req.announce.event == stopped) {
+            ++stopped_count;
+        } else if (req.announce.event == completed) {
+            ++completed_count;
+        }
+        return {req.serial, false, 0, tracker_success_response(tracker, req.announce)};
     }
 };
 
@@ -64,4 +78,3 @@ struct ack_msg : base_message {
 };
 
 using paxos_message = std::variant<propose_msg, probe_msg, prepare_msg, commit_msg, ack_msg>;
-

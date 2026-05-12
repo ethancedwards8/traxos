@@ -143,6 +143,7 @@ target_include_directories(Bencode PUBLIC
 )
 
 add_library(TraxosDummy OBJECT
+    tracker-state.cc
     utils.cc
 )
 
@@ -151,6 +152,7 @@ add_executable(server
     $<TARGET_OBJECTS:Cotamer>
     $<TARGET_OBJECTS:CotamerHttp>
     $<TARGET_OBJECTS:Bencode>
+    $<TARGET_OBJECTS:TraxosDummy>
 )
 
 add_executable(client
@@ -158,6 +160,7 @@ add_executable(client
     $<TARGET_OBJECTS:Cotamer>
     $<TARGET_OBJECTS:CotamerHttp>
     $<TARGET_OBJECTS:Bencode>
+    $<TARGET_OBJECTS:TraxosDummy>
 )
 
 add_executable(traxos-paxos-test

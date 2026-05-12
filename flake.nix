@@ -63,6 +63,9 @@
                     runHook postInstall
                   '';
               })
+
+              latexrun
+              texliveFull
           ];
 
           buildInputs = [

@@ -3,6 +3,7 @@
 #include "cotamer/http.hh"
 #include "bencode.h"
 #include "cotamer/cotamer.hh"
+#include "tracker-state.hh"
 #include <cassert>
 #include <charconv>
 #include <libgen.h>
@@ -43,65 +44,6 @@ bool copy_exact(char (&field)[N], std::string_view value) {
     }
     memcpy(field, value.data(), N);
     return true;
-}
-
-bt_info_hash make_info_hash(const char (&bytes)[20]) {
-    bt_info_hash key;
-    memcpy(key.data(), bytes, key.size());
-    return key;
-}
-
-bt_peer_id make_peer_id(const char (&bytes)[20]) {
-    bt_peer_id key;
-    memcpy(key.data(), bytes, key.size());
-    return key;
-}
-
-template <size_t N>
-std::string hex_bytes(const std::array<char, N>& bytes) {
-    static constexpr char digits[] = "0123456789abcdef";
-    std::string out;
-    out.reserve(N * 2);
-    for (char byte : bytes) {
-        auto value = static_cast<unsigned char>(byte);
-        out.push_back(digits[value >> 4]);
-        out.push_back(digits[value & 0xf]);
-    }
-    return out;
-}
-
-std::optional<uint32_t> parse_ipv4(std::string_view value) {
-    std::string dotted(value);
-    dotted += "."; // hack
-
-    uint32_t ip = 0;
-    size_t start = 0;
-
-    for (int i = 0; i != 4; ++i) {
-        size_t dot = dotted.find('.', start);
-
-        auto part = parse_number<uint32_t>(std::string_view(dotted).substr(start, dot - start));
-        if (!part || *part > 255) {
-            return std::nullopt;
-        }
-
-        ip = (ip << 8) | *part;
-        start = dot + 1;
-    }
-
-    if (start != dotted.size()) {
-        return std::nullopt;
-    }
-
-    return ip;
-}
-
-std::string format_ipv4(uint32_t ip) {
-    return std::format("{}.{}.{}.{}",
-                       (ip >> 24) & 0xff,
-                       (ip >> 16) & 0xff,
-                       (ip >> 8) & 0xff,
-                       ip & 0xff);
 }
 
 // https://stackoverflow.com/questions/20472072/c-socket-get-ip-address-from-filedescriptor-returned-from-accept
@@ -215,72 +157,6 @@ void parse_announce_request(cot::http_message& req,
 
         }
     }
-}
-
-void apply_announce(bt_tracker_state& state, const bt_tracker_announce_request& bt_req) {
-    bt_info_hash info_hash = make_info_hash(bt_req.info_hash);
-    bt_peer_id peer_id = make_peer_id(bt_req.peer_id);
-    auto& peers = state.torrents[info_hash];
-
-    if (bt_req.event == stopped) {
-        peers.erase(peer_id);
-        return;
-    }
-
-    bt_peer peer;
-
-    peer.peer_id = peer_id;
-    peer.ip = bt_req.ip;
-    peer.port = bt_req.port;
-    peer.uploaded = bt_req.uploaded;
-    peer.downloaded = bt_req.downloaded;
-    peer.left = bt_req.left;
-    peer.complete = bt_req.event == completed || bt_req.left == 0;
-
-    peers[peer_id] = peer;
-}
-
-std::string tracker_success_response(const bt_tracker_state& state,
-                                     const bt_tracker_announce_request& bt_req) {
-    bt_info_hash info_hash = make_info_hash(bt_req.info_hash);
-    auto torrent = state.torrents.find(info_hash);
-
-    std::string body = "d8:intervali900e5:peersl";
-    if (torrent != state.torrents.end()) {
-        int32_t count = 0;
-        for (auto& [peer_id, peer] : torrent->second) {
-            // own peer doesn't need to be in peer list
-            if (peer_id == make_peer_id(bt_req.peer_id)) {
-                continue;
-            }
-            if (count == bt_req.numwant) {
-                break;
-            }
-
-            std::string ip = format_ipv4(peer.ip);
-            body += std::format("d2:ip{}:{}4:porti{}ee", ip.size(), ip, peer.port);
-            ++count;
-        }
-    }
-    body += "ee";
-    return body;
-}
-
-std::string tracker_debug_response(const bt_tracker_state& state) {
-    std::string body;
-    body += std::format("torrents: {}\n", state.torrents.size());
-    for (auto& [info_hash, peers] : state.torrents) {
-        body += std::format("info_hash {} peers: {}\n", hex_bytes(info_hash), peers.size());
-        for (auto& [peer_id, peer] : peers) {
-            body += std::format("  peer_id {} ip {} port {} left {} complete {}\n",
-                                hex_bytes(peer_id),
-                                format_ipv4(peer.ip),
-                                peer.port,
-                                peer.left,
-                                peer.complete ? "yes" : "no");
-        }
-    }
-    return body;
 }
 
 cot::task<> handle_connection(cot::fd cfd, bt_tracker_state& tracker_state) {
