@@ -142,6 +142,10 @@ target_include_directories(Bencode PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../bencode
 )
 
+add_library(TraxosDummy OBJECT
+    utils.cc
+)
+
 add_executable(server
     bt-paxos.cc
     $<TARGET_OBJECTS:Cotamer>
@@ -154,6 +158,12 @@ add_executable(client
     $<TARGET_OBJECTS:Cotamer>
     $<TARGET_OBJECTS:CotamerHttp>
     $<TARGET_OBJECTS:Bencode>
+)
+
+add_executable(traxos-paxos-test
+    traxos-paxos-test.cc
+    $<TARGET_OBJECTS:Cotamer>
+    $<TARGET_OBJECTS:TraxosDummy>
 )
 
 if(COTAMER_HAVE_LLHTTP)
