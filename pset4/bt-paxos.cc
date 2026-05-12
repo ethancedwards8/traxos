@@ -14,6 +14,7 @@
 #include <optional>
 #include <print>
 #include <random>
+#include <string>
 #include <string_view>
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -54,6 +55,19 @@ bt_peer_id make_peer_id(const char (&bytes)[20]) {
     bt_peer_id key;
     memcpy(key.data(), bytes, key.size());
     return key;
+}
+
+template <size_t N>
+std::string hex_bytes(const std::array<char, N>& bytes) {
+    static constexpr char digits[] = "0123456789abcdef";
+    std::string out;
+    out.reserve(N * 2);
+    for (char byte : bytes) {
+        auto value = static_cast<unsigned char>(byte);
+        out.push_back(digits[value >> 4]);
+        out.push_back(digits[value & 0xf]);
+    }
+    return out;
 }
 
 std::optional<uint32_t> parse_ipv4(std::string_view value) {
@@ -252,6 +266,23 @@ std::string tracker_success_response(const bt_tracker_state& state,
     return body;
 }
 
+std::string tracker_debug_response(const bt_tracker_state& state) {
+    std::string body;
+    body += std::format("torrents: {}\n", state.torrents.size());
+    for (auto& [info_hash, peers] : state.torrents) {
+        body += std::format("info_hash {} peers: {}\n", hex_bytes(info_hash), peers.size());
+        for (auto& [peer_id, peer] : peers) {
+            body += std::format("  peer_id {} ip {} port {} left {} complete {}\n",
+                                hex_bytes(peer_id),
+                                format_ipv4(peer.ip),
+                                peer.port,
+                                peer.left,
+                                peer.complete ? "yes" : "no");
+        }
+    }
+    return body;
+}
+
 cot::task<> handle_connection(cot::fd cfd, bt_tracker_state& tracker_state) {
     std::optional<uint32_t> connection_ip = peer_ipv4(cfd);
     cot::http_parser hp(std::move(cfd), cot::http_parser::server);
@@ -287,19 +318,28 @@ cot::task<> handle_connection(cot::fd cfd, bt_tracker_state& tracker_state) {
             if (!failure.empty()) {
                 res.status_code(200)
                     .header("Content-Type", "text/plain")
+                    .header("Connection", "close")
                     .body(failure);
             } else {
                 apply_announce(tracker_state, bt_req);
 
                 res.status_code(200)
                     .header("Content-Type", "text/plain")
+                    .header("Connection", "close")
                     .body(tracker_success_response(tracker_state, bt_req));
             }
 
 
+        } else if (url == "/debug") {
+            res.status_code(200)
+                .header("Content-Type", "text/plain")
+                .header("Connection", "close")
+                .body(tracker_debug_response(tracker_state));
+
         } else {
             res.status_code(404)
                 .header("Content-Type", "text/plain")
+                .header("Connection", "close")
                 .body(std::format("you asked for {}, but probably want /announce instead\n", req.url()));
         }
         co_await hp.send(std::move(res));
