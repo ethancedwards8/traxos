@@ -142,7 +142,7 @@ target_include_directories(Bencode PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../bencode
 )
 
-add_library(TraxosDummy OBJECT
+add_library(TraxosCore OBJECT
     tracker-state.cc
     utils.cc
 )
@@ -152,7 +152,7 @@ add_executable(server
     $<TARGET_OBJECTS:Cotamer>
     $<TARGET_OBJECTS:CotamerHttp>
     $<TARGET_OBJECTS:Bencode>
-    $<TARGET_OBJECTS:TraxosDummy>
+    $<TARGET_OBJECTS:TraxosCore>
 )
 
 add_executable(client
@@ -160,13 +160,13 @@ add_executable(client
     $<TARGET_OBJECTS:Cotamer>
     $<TARGET_OBJECTS:CotamerHttp>
     $<TARGET_OBJECTS:Bencode>
-    $<TARGET_OBJECTS:TraxosDummy>
+    $<TARGET_OBJECTS:TraxosCore>
 )
 
 add_executable(traxos-paxos-test
     traxos-paxos-test.cc
     $<TARGET_OBJECTS:Cotamer>
-    $<TARGET_OBJECTS:TraxosDummy>
+    $<TARGET_OBJECTS:TraxosCore>
 )
 
 if(COTAMER_HAVE_LLHTTP)

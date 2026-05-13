@@ -9,6 +9,7 @@
 #include <getopt.h>
 #include <cstring>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <print>
 #include <random>
@@ -21,8 +22,11 @@ namespace cot = cotamer;
 using namespace std::chrono_literals;
 
 enum class failure_mode {
+    delayed_leader_failure,
+    disruptive_isolate,
     failed_leader,
     failed_replica,
+    multiple_random_up_down,
     none
 };
 
@@ -60,9 +64,9 @@ static bool same_request(const request& a, const request& b) {
     return message_serial(a) == message_serial(b);
 }
 
-class dummy_clients {
+class tracker_clients {
 public:
-    dummy_clients(size_t nreplicas, random_source& randomness)
+    tracker_clients(size_t nreplicas, random_source& randomness)
         : randomness_(randomness),
           out_(nreplicas),
           in_(randomness, "clients") {
@@ -245,9 +249,9 @@ private:
 struct replica;
 struct instance {
     testinfo& tester;
-    dummy_clients& clients;
+    tracker_clients& clients;
     std::vector<std::unique_ptr<replica>> replicas;
-    instance(testinfo&, dummy_clients&);
+    instance(testinfo&, tracker_clients&);
 };
 
 struct replica {
@@ -341,7 +345,7 @@ struct replica {
     }
 };
 
-instance::instance(testinfo& tester, dummy_clients& clients)
+instance::instance(testinfo& tester, tracker_clients& clients)
     : tester(tester), clients(clients), replicas(tester.nreplicas) {
     for (size_t s = 0; s != tester.nreplicas; ++s) {
         replicas[s].reset(new replica(s, tester.nreplicas, tester.randomness));
@@ -702,7 +706,71 @@ static void set_replica_channel_loss(instance& inst, size_t replica, double loss
     inst.replicas[replica]->to_clients_.set_loss(loss);
 }
 
-static cot::task<> stop_clients_and_clear_after(dummy_clients& clients,
+static cot::task<> fail_primary_after(instance& inst, cot::duration delay) {
+    co_await cot::after(delay);
+    set_replica_channel_loss(inst, inst.tester.initial_leader, 1);
+}
+
+static cot::task<> up_down_randomly(instance& inst,
+                                    int replica,
+                                    cot::duration period,
+                                    std::shared_ptr<bool> running) {
+    if (replica < 0 || replica >= static_cast<int>(inst.tester.nreplicas)) {
+        co_return;
+    }
+    while (*running) {
+        co_await cot::after(inst.tester.randomness.uniform(period / 2, period * 3 / 2));
+        if (!*running) {
+            break;
+        }
+        set_replica_channel_loss(inst, replica, 1);
+
+        co_await cot::after(inst.tester.randomness.uniform(period, period * 3));
+        set_replica_channel_loss(inst, replica, inst.tester.loss);
+    }
+}
+
+static cot::task<> disruptive_isolate_routine(instance& inst,
+                                             cot::duration split_time = 10s,
+                                             cot::duration heal_time = 10s) {
+    co_await cot::after(split_time);
+
+    size_t victim = inst.tester.nreplicas;
+    std::vector<size_t> followers;
+    followers.reserve(inst.tester.nreplicas);
+    for (size_t s = 0; s < inst.tester.nreplicas; ++s) {
+        if (inst.replicas[s]->leader_index_ != s) {
+            followers.push_back(s);
+        }
+    }
+
+    if (!followers.empty()) {
+        victim = followers[inst.tester.randomness.uniform<size_t>(0, followers.size() - 1)];
+        for (size_t s = 0; s < inst.tester.nreplicas; ++s) {
+            if (s != victim) {
+                inst.replicas[s]->to_replicas_[victim]->set_loss(1);
+            }
+        }
+    }
+
+    co_await cot::after(heal_time);
+
+    if (victim != inst.tester.nreplicas) {
+        for (size_t s = 0; s < inst.tester.nreplicas; ++s) {
+            if (s != victim) {
+                inst.replicas[s]->to_replicas_[victim]->set_loss(inst.tester.loss);
+            }
+        }
+    }
+}
+
+static void recover_all_replicas(instance& inst) {
+    for (size_t s = 0; s != inst.tester.nreplicas; ++s) {
+        set_replica_channel_loss(inst, s, inst.tester.loss);
+    }
+}
+
+static cot::task<> stop_clients_and_clear_after(tracker_clients& clients,
                                                 cot::duration run_for,
                                                 cot::duration settle_for) {
     co_await cot::after(run_for);
@@ -711,7 +779,24 @@ static cot::task<> stop_clients_and_clear_after(dummy_clients& clients,
     cot::clear();
 }
 
+static cot::task<> stop_clients_recover_and_clear_after(tracker_clients& clients,
+                                                        instance& inst,
+                                                        std::shared_ptr<bool> running,
+                                                        cot::duration run_for,
+                                                        cot::duration settle_for) {
+    co_await cot::after(run_for);
+    clients.stop();
+    *running = false;
+    recover_all_replicas(inst);
+    co_await cot::after(settle_for);
+    cot::clear();
+}
+
 static bool should_skip_replica(const testinfo& tester, size_t replica) {
+    if (tester.mode == failure_mode::delayed_leader_failure
+        && replica == tester.initial_leader) {
+        return true;
+    }
     if (tester.mode == failure_mode::failed_leader && replica == tester.initial_leader) {
         return true;
     }
@@ -728,7 +813,7 @@ static bool try_one_seed(testinfo& tester, unsigned long seed) {
     cot::reset();
     tester.randomness.seed(seed);
 
-    dummy_clients clients(tester.nreplicas, tester.randomness);
+    tracker_clients clients(tester.nreplicas, tester.randomness);
     instance inst(tester, clients);
     clients.start();
 
@@ -737,13 +822,30 @@ static bool try_one_seed(testinfo& tester, unsigned long seed) {
         tasks.push_back(inst.replicas[s]->run());
     }
 
+    auto failure_schedule_running = std::make_shared<bool>(true);
     if (tester.mode == failure_mode::failed_leader) {
         set_replica_channel_loss(inst, tester.initial_leader, 1);
     } else if (tester.mode == failure_mode::failed_replica) {
         set_replica_channel_loss(inst, tester.failed_replica, 1);
+    } else if (tester.mode == failure_mode::delayed_leader_failure) {
+        tasks.push_back(fail_primary_after(inst, 10s));
+    } else if (tester.mode == failure_mode::multiple_random_up_down) {
+        tasks.push_back(up_down_randomly(
+            inst, tester.failed_replica, 3s, failure_schedule_running
+        ));
+    } else if (tester.mode == failure_mode::disruptive_isolate) {
+        tasks.push_back(disruptive_isolate_routine(inst));
     }
 
-    cot::task<> timeout_task = stop_clients_and_clear_after(clients, 20s, 5s);
+    cot::task<> timeout_task;
+    if (tester.mode == failure_mode::multiple_random_up_down
+        || tester.mode == failure_mode::disruptive_isolate) {
+        timeout_task = stop_clients_recover_and_clear_after(
+            clients, inst, failure_schedule_running, 20s, 5s
+        );
+    } else {
+        timeout_task = stop_clients_and_clear_after(clients, 20s, 5s);
+    }
     cot::loop();
 
     size_t reference = tester.nreplicas;
@@ -839,10 +941,16 @@ int main(int argc, char* argv[]) {
         } else if (ch == 'r') {
             tester.failed_replica = from_str_chars<int>(optarg);
         } else if (ch == 'f') {
-            if (strcmp(optarg, "failed_leader") == 0) {
+            if (strcmp(optarg, "delayed_leader_failure") == 0) {
+                tester.mode = failure_mode::delayed_leader_failure;
+            } else if (strcmp(optarg, "disruptive_isolate") == 0) {
+                tester.mode = failure_mode::disruptive_isolate;
+            } else if (strcmp(optarg, "failed_leader") == 0) {
                 tester.mode = failure_mode::failed_leader;
             } else if (strcmp(optarg, "failed_replica") == 0) {
                 tester.mode = failure_mode::failed_replica;
+            } else if (strcmp(optarg, "multiple_random_up_down") == 0) {
+                tester.mode = failure_mode::multiple_random_up_down;
             } else if (strcmp(optarg, "none") == 0) {
                 tester.mode = failure_mode::none;
             } else {
@@ -855,8 +963,10 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    if (tester.mode == failure_mode::failed_replica && tester.failed_replica < 0) {
-        std::print(std::cerr, "failed_replica requires -r\n");
+    if ((tester.mode == failure_mode::failed_replica
+         || tester.mode == failure_mode::multiple_random_up_down)
+        && tester.failed_replica < 0) {
+        std::print(std::cerr, "failure mode requires -r\n");
         return EXIT_FAILURE;
     }
 

@@ -1,0 +1,442 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Template for USENIX papers.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\documentclass[letterpaper,twocolumn,10pt]{article}
+\usepackage{usenix2019_v3}
+\usepackage{amsmath}
+\usepackage{filecontents}
+
+%-------------------------------------------------------------------------------
+\begin{filecontents}{\jobname.bib}
+%-------------------------------------------------------------------------------
+@misc{bittorrentSpec,
+  key = {BitTorrent Specification},
+  title = {{BitTorrent} Specification},
+  note = {\url{https://wiki.theory.org/BitTorrentSpecification}}
+}
+
+@misc{trackerProtocol,
+  key = {BitTorrent Tracker Protocol},
+  title = {{BitTorrent} Tracker Protocol},
+  note = {\url{https://wiki.theory.org/BitTorrent_Tracker_Protocol}}
+}
+
+@misc{opentracker,
+  key = {opentracker},
+  title = {opentracker},
+  note = {\url{https://erdgeist.org/gitweb/opentracker/}}
+}
+
+@misc{tnt,
+  key = {tnt},
+  title = {tnt: A Tiny Torrent Client},
+  note = {\url{https://github.com/sujanan/tnt/}}
+}
+
+@misc{transmission,
+  key = {Transmission},
+  title = {Transmission BitTorrent Client},
+  note = {\url{https://transmissionbt.com/}}
+}
+
+@misc{mktorrent,
+  key = {mktorrent},
+  title = {mktorrent},
+  note = {\url{https://github.com/pobrn/mktorrent/wiki}}
+}
+
+@inproceedings{pbft,
+  author = {Miguel Castro and Barbara Liskov},
+  title = {Practical Byzantine Fault Tolerance},
+  booktitle = {Proc. USENIX OSDI},
+  month = feb,
+  year = {1999},
+  note = {\url{https://css.csail.mit.edu/6.824/2014/papers/castro-practicalbft.pdf}}
+}
+
+@inproceedings{hotstuff,
+  author = {Maofan Yin and Dahlia Malkhi and Michael K. Reiter and Guy Golan Gueta and Ittai Abraham},
+  title = {{HotStuff}: {BFT} Consensus with Linearity and Responsiveness},
+  booktitle = {Proc. ACM PODC},
+  month = jul,
+  year = {2019},
+  note = {\url{https://dl.acm.org/doi/10.1145/3293611.3331591}}
+}
+\end{filecontents}
+
+%-------------------------------------------------------------------------------
+\begin{document}
+%-------------------------------------------------------------------------------
+
+\date{}
+
+\title{\Large \bf Traxos: Distributed Trackers with Paxos for Fun and Profit}
+
+\author{
+{\rm Ethan Carter Edwards}\\
+Harvard University}
+
+\maketitle
+
+%-------------------------------------------------------------------------------
+\begin{abstract}
+%-------------------------------------------------------------------------------
+Traxos is a BitTorrent tracker project built around a simple observation:
+a tracker is a small replicated state machine. A tracker receives
+``announce'' requests from peers, records which peers participate in which
+torrents, and returns a peer list. This paper describes Traxos as it
+currently stands: a BitTorrent tracker state machine, a simple HTTP tracker
+front end, and an in-process Multi-Paxos prototype that replicates real
+tracker announce commands under simulated message loss and replica failure.
+The live HTTP server is not yet connected to the Paxos path, but the core
+operation that must be replicated is implemented and tested as a Paxos
+state-machine command.
+\end{abstract}
+
+%-------------------------------------------------------------------------------
+\section{Introduction}
+%-------------------------------------------------------------------------------
+
+BitTorrent clients do not discover peers magically. In the common tracker
+mode, each client sends an HTTP announce request to a tracker containing the
+torrent's \texttt{info\_hash}, the client's \texttt{peer\_id}, its listening
+port, transfer counters, and whether the client has started, completed, or
+stopped the torrent~\cite{trackerProtocol}. The tracker replies with a list
+of other peers for the same torrent. This makes the tracker operationally
+important: if it is unreachable, new clients have a harder time joining the
+swarm even if existing peers still have the file.
+
+Traxos explores whether a tracker can be made highly available using the
+same replicated-state-machine techniques used for databases and lock
+services. The design goal is that a BitTorrent client should eventually be
+able to announce to any tracker replica, and the replicas should converge
+on the same peer table. If one tracker goes down, clients should be able to
+continue using the others without losing recently committed tracker state.
+
+The current system has two connected artifacts. First, I built a functional
+HTTP announce server and tested it with \texttt{curl}, Transmission, and
+\texttt{tnt}. Second, I extracted the tracker update logic into a
+deterministic state machine and used it as the value type for a Multi-Paxos
+prototype. The Paxos prototype runs in a simulator rather than as a
+networked tracker cluster, but it orders and applies the same parsed
+announce commands that the HTTP server uses.
+
+%-------------------------------------------------------------------------------
+\section{Background and Related Work}
+%-------------------------------------------------------------------------------
+
+The BitTorrent metainfo file contains an announce URL and an \texttt{info}
+dictionary whose hash identifies the torrent~\cite{bittorrentSpec}. Tools
+such as \texttt{mktorrent} create these files and set the tracker's announce
+URL~\cite{mktorrent}. Clients such as Transmission and \texttt{tnt} then use
+the announce URL to register themselves and request peers~\cite{transmission,tnt}.
+
+Production trackers such as opentracker emphasize scale and low overhead for
+very large public swarms~\cite{opentracker}. Traxos, however, focuses on small
+deployments where availability matters more than absolute tracker throughput.
+The prototype intentionally chooses a simple response format and state
+representation so the protocol is easy to implement and reason about during
+replication development.
+
+Traxos uses a crash-fault-tolerant Paxos-style model rather than Byzantine
+fault tolerance. Systems such as Practical Byzantine Fault Tolerance and
+HotStuff tolerate arbitrary faulty replicas at the cost of stronger
+cryptographic and quorum assumptions~\cite{pbft,hotstuff}. That model is
+important for adversarial settings, but Traxos targets the simpler case of
+tracker replicas that may crash or lose messages but are not malicious.
+
+The tracker response format also influenced the implementation. Public
+trackers commonly return a bencoded dictionary containing an
+\texttt{interval} and a \texttt{peers} value. The \texttt{peers} value can
+be a compact byte string or a list of dictionaries. Traxos currently returns
+the list-of-dictionaries form, such as:
+
+\begin{verbatim}
+d8:intervali100e5:peersl
+  d2:ip11:10.0.20.2274:porti51413ee
+ee
+\end{verbatim}
+
+\noindent
+Whitespace is shown here for readability; the actual response is one
+continuous bencoded string. More advanced trackers implemented "compact"
+response that is more efficient, but harder to implement.
+
+%-------------------------------------------------------------------------------
+\section{Design}
+%-------------------------------------------------------------------------------
+
+The central design decision is to treat tracker announces as state-machine
+commands. In c++, the state type is:
+
+\begin{verbatim}
+map<info_hash, map<peer_id, peer>>
+\end{verbatim}
+
+\noindent
+Each peer record stores the peer id, IPv4 address, port, uploaded and
+downloaded counters, remaining bytes, and whether the peer is complete.
+When an announce arrives, the tracker indexes first by \texttt{info\_hash} (the torrent)
+and then by \texttt{peer\_id}. A \texttt{stopped} announce removes a peer;
+other announces replace that peer's record. A peer is considered complete
+when it sends \texttt{event=completed} or reports \texttt{left=0}.
+
+This command boundary is also the Paxos boundary. Replicas do not need to agree
+on parsing details; they need to agree on an ordered sequence of parsed
+announce commands. In fact, some trackers and clients use UDP instead of
+HTTP/TCP. Also, Traxos lacks support for the \texttt{/scrape} endpoint. In the
+prototype, the Paxos request contains a serial number and a
+\texttt{bt\_tracker\_announce\_request}. Applying a committed request mutates
+the tracker table and produces the same tracker success response that the
+single-node HTTP server would have produced.
+
+Traxos stores \texttt{info\_hash} and \texttt{peer\_id} as 20-byte values. In
+the HTTP parser these start as fixed-size \texttt{char[20]} fields, since the
+BitTorrent protocol defines them as 20-byte strings. For use as map keys, the
+implementation converts them to \texttt{std::array<char, 20>}; raw C arrays do
+not compare as values in the way \texttt{std::map} needs.
+
+IPv4 addresses are stored as \texttt{uint32\_t}. This avoids the awkwardness
+of fixed-size C strings for addresses of different textual lengths. The
+tracker parses dotted IPv4 strings into a 32-bit value using shifts, and
+formats them back to dotted decimal when constructing responses.
+
+Traxos accepts an explicit \texttt{ip} query parameter, but if the client does
+not provide one it uses the source address of the TCP connection. This was
+necessary for local testing: Transmission sends an \texttt{ipv4} parameter
+containing the clients public IP address, which is not the address other machines
+on my LAN should use (where testing was being done). Ignoring that alias and
+using the TCP source address made the tracker return useful local peer IP
+addresses. Similarly, \texttt{tnt} does not supply the ip parameter so it must
+be inferred from the TCP source address.
+
+The Multi-Paxos prototype uses a fixed set of replicas in an in-process
+network simulator. One replica acts as leader and batches client announce
+commands into proposed log suffixes. Followers promise rounds, accept
+suffixes, apply commits in order, and redirect client requests to the
+leader they currently believe in. If the leader becomes unreachable,
+followers eventually time out, run a new prepare phase, and continue with a
+higher round. The test harness deliberately allows a small amount of
+shutdown lag between replicas, but it rejects divergent applied prefixes.
+
+%-------------------------------------------------------------------------------
+\section{Implementation}
+%-------------------------------------------------------------------------------
+
+The tracker is implemented as a Cotamer HTTP server. The server listens on
+\texttt{0.0.0.0:9000}, accepts HTTP requests, and handles two paths:
+\texttt{/announce} and \texttt{/debug}. The announce path parses query
+parameters, applies the announce to the peer table, and returns a bencoded
+success response. The debug path returns a plain-text dump of the local
+tracker state, including torrent hashes, peer ids, IP addresses, ports,
+remaining byte counts, and completion status.
+
+The code is split into three conceptual pieces. The type layer defines
+BitTorrent tracker data structures. The state layer applies announces to
+the peer table, converts raw hashes into comparable keys, and constructs
+tracker responses. The HTTP layer parses requests and sends responses. The
+Paxos test uses the same state layer directly, which prevents the
+replicated path from drifting away from the tracker semantics.
+
+I originally considered using a bencode library for all tracker responses,
+but the available library in the repository was more useful as a decoder
+than as an encoder. Traxos therefore builds the small response body
+directly with formatted strings. This is not a general bencode encoder, but
+it is adequate for the tracker response shape currently supported:
+
+\begin{verbatim}
+d8:intervali100e5:peersl...ee
+\end{verbatim}
+
+\noindent
+Failure responses are currently plain text. This is intentionally temporary:
+real trackers should return bencoded failure dictionaries, but plain text
+made early debugging faster and is fine for a prototype.
+
+The Paxos implementation is currently still test-local rather than a
+library used by the HTTP server. It stores accepted values in memory, uses
+monotonic round numbers assigned by replica id, and keeps enough accepted
+suffix metadata for a new leader to recover values during prepare. The
+client model is intentionally lightweight: it generates consistent tracker
+lifecycles of the form \texttt{started}, update, \texttt{completed},
+\texttt{stopped}. This is not a full BitTorrent swarm simulation, but it
+does exercise realistic tracker state transitions.
+
+Creating a custom client (similar to \texttt{tnt} but actually functionally
+correct) is probably necessary for networked testing, rather than coercing
+Transmission or \texttt{tnt} to work.
+
+The paxos implementation is correct insofar as it is tested with various failure
+models similar to pset3. Given Paxos's flexibility, not much had to be done to
+maintain support when switching the client models. All failure model tests
+passed the first time.
+
+%-------------------------------------------------------------------------------
+\section{Evaluation}
+%-------------------------------------------------------------------------------
+
+Initial testing used \texttt{curl} against local announce URLs. This quickly
+exposed a common source of tracker bugs: \texttt{info\_hash} is binary data
+inside a URL, so it must be URL-encoded correctly. Once the hash was encoded
+properly, repeated curl requests showed that peers were stored and returned
+as expected.
+
+The next test used a small torrent created with \texttt{mktorrent} for
+\texttt{cs61hello.jpg}. I validated the torrent with Transmission's metadata
+tools and then ran tracker tests across several machines on my home
+network. The debug endpoint was essential here. A representative debug
+response looked like:
+
+\begin{verbatim}
+torrents: 1
+info_hash 45d84b...41f63b3 peers: 2
+  peer ... ip 10.0.20.227 port 51413
+  peer ... ip 10.0.10.175 port 51413
+\end{verbatim}
+
+Transmission testing was mostly successful, but the command-line output was
+misleading. Transmission can print ``Seeding'' even when the progress
+indicator is \texttt{[0.00]}; the progress value is the more important
+signal. I also learned to use a fresh Transmission configuration directory
+with \texttt{-g} during tests, because old resume state can make a client
+appear to have files that are not present in the selected download
+directory.
+
+The hardest debugging session involved \texttt{tnt}. The tracker returned a
+valid list-of-dictionaries peer response containing a Transmission seeder:
+
+\begin{verbatim}
+d8:intervali900e5:peersl
+  d2:ip11:10.0.20.2274:porti51413ee
+ee
+\end{verbatim}
+
+\noindent
+I compared this shape with a Debian tracker response and found that Debian
+also returned dictionary-form peers, not compact peers. I also tried
+matching Debian's TCP \texttt{Connection: close} behavior, but that caused
+\texttt{tnt} to fail with a socket-closed error. Network reachability tests
+with \texttt{nc} showed that the seeder port could be reached. Finally,
+\texttt{tcpdump} on the Transmission seeder showed no incoming TCP
+connection attempt from \texttt{tnt}; only UDP traffic from Transmission was
+visible. This suggested that the tracker had returned a usable peer, but
+\texttt{tnt} did not attempt the expected TCP peer connection in this setup.
+I basically gave up on \texttt{tnt} and decided to just stick to Transmission,
+especially given that \texttt{tnt} is bespoke open-source software and not
+a battle tested standard.
+
+For replication testing, I used the \texttt{netsim} simulator from the
+course framework. The main test program, \texttt{traxos-paxos-test},
+constructs three Paxos replicas and a small set of tracker clients. Each
+client submits parsed announce commands to random replicas; followers
+redirect clients to the current leader, and clients retry on timeout. The
+test runs multiple random seeds and reports the number of committed
+announces by event type, for example:
+
+\begin{verbatim}
+33 announce: 17 started, 8 completed, 8 stopped
+\end{verbatim}
+
+\noindent
+This is very similar to pset3. The checker compares all live replicas after the
+simulated run. It requires their common applied prefix to match exactly,
+permits a differential of 5 to allow for discrepancies when the simulation
+ends, and checks that every acknowledged client command appears in the
+reference replica's applied state. I ran the test with lossy replica-to-replica
+channels (-l 0.01..0.5) and with failure modes that isolate the initial leader or isolate a
+follower. These tests do not prove the implementation is production-ready, but
+they give useful evidence that tracker announce commands are being ordered and
+applied consistently by the Multi-Paxos prototype.
+
+%-------------------------------------------------------------------------------
+\section{Limitations and Future Work}
+%-------------------------------------------------------------------------------
+
+The current prototype is not yet a complete distributed tracker. Although
+the Paxos path replicates real tracker announce commands in simulation,
+the live HTTP server still applies announces to local memory directly. The
+system also has no durable log, no restart recovery, no peer expiration, no
+\texttt{/scrape} support, no IPv6 support, no compact peer response, and
+only temporary plain-text failure responses. These are time/deadline
+limitations rather than fundamental design problems.
+
+The next major step is to move the Paxos implementation out of the test
+harness and place it between HTTP parsing and state mutation. In that
+design, \texttt{/announce} would parse the BitTorrent request into an
+announce command, submit that command to a replicated log, and return the
+response generated after the command commits. Each tracker replica would
+apply the same commands in the same order, so any live replica could answer
+future announce requests with a consistent view of the swarm.
+
+There are also tracker-specific implementation deficiencies. Peer records
+should eventually expire if clients stop announcing (currently, they are held
+in memory but not served). Failure responses should be bencoded. The tracker
+should probably support compact responses for clients that request
+\texttt{compact=1}. Finally, the implementation should expose better
+instrumentation than the current debug endpoint before being used outside a
+controlled test network.
+
+Additionally, while there was not sufficient time for this project, a more
+open deployment model would be worth exploring. A trustless protocol could
+allow independent participants to join the tracker replication group,
+similar in idea to blockchain systems. In a straightforward Traxos
+deployment, all replicas would likely be controlled by the same group and
+potentially located close together, increasing the risk of correlated
+failures.
+
+Blockchain-style protocols are probably unsuitable for this tracker use
+case because of their latency and throughput costs. However, Byzantine
+fault-tolerant protocols such as HotStuff and Practical Byzantine Fault
+Tolerance should be explored in future iterations ~\cite{hotstuff,pbft}.
+
+%------------------------------------------------------------------------------
+\section{Conclusion}
+%-------------------------------------------------------------------------------
+
+Traxos starts from a small but useful premise: a BitTorrent tracker is a state
+machine. This prototype implements that state machine as a functional HTTP
+tracker via a replicated state machine as Multi-Paxos. The result is not yet a
+deployed replicated tracker, but it demonstrates the main design: parse
+requests at the edge, order parsed announce commands through consensus, and
+apply them deterministically to a peer table.
+
+%-------------------------------------------------------------------------------
+\section*{Acknowledgments}
+%-------------------------------------------------------------------------------
+
+Thanks to the CS 2620 staff (Eddie, Howard, and Tori) for the project
+framework, Cotamer support, and office hours help. The debugging process also
+benefited from comparing behavior with public tracker responses and real
+BitTorrent clients.
+
+%-------------------------------------------------------------------------------
+\section*{Availability}
+%-------------------------------------------------------------------------------
+
+The current artifact is the Traxos repository, including the tracker server,
+test torrents, and notes describing the debugging process.
+
+%-------------------------------------------------------------------------------
+\section*{AI Disclosure}
+%-------------------------------------------------------------------------------
+
+LLM/AI coding assistants were used during this project for proofreading/grammar
+of the paper as well as assistance outlining and collecting my thoughts for the
+first drafts. They were also used to help me sort out LaTeX and as a search
+engine to find the template used for this paper.
+
+Additionally, they were used to help migrate my old (pset3) Paxos implementation
+from PancyDB to the interface I defined for the tracker implementation.
+
+The tracker was implemented from scratch and without the assistance of any
+coding assistants.
+
+
+%-------------------------------------------------------------------------------
+\bibliographystyle{plain}
+\bibliography{\jobname}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\end{document}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

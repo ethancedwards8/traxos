@@ -165,17 +165,12 @@ cot::task<> handle_connection(cot::fd cfd, bt_tracker_state& tracker_state) {
     do {
         cot::http_message req = co_await hp.receive();
         if (!hp.ok()) {
-            break;                                 // peer closed or parse error
+            break;
         }
         cot::http_message res;
 
         // https://stackoverflow.com/a/650307
         // interesting idea for later
-        // switch (req.url()) {
-        //     case "success":
-        //         break;
-        //     default:
-        // }
 
         // https://stackoverflow.com/questions/48081436/how-you-convert-a-stdstring-view-to-a-const-char
         std::string_view url = req.path();

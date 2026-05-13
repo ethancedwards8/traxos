@@ -113,5 +113,45 @@ listening on any, link-type PKTAP (Apple DLT_PKTAP), snapshot length 524288 byte
 04:49:05.854798 IP 10.0.20.227.51413 > 10.0.10.175.6881: UDP, length 20
 
 
-Conclusion: the tracker gave tnt a valid seeder, but tnt never attempted the TCP peer connection. that means tnt was BAD! and i don't care
+the tracker gave tnt a valid seeder, but tnt never attempted the TCP peer connection. that means tnt was BAD! and i don't care
 enough to fix it. transmission works. i trust its right.
+
+
+## paxos port
+
+I mainly just copied my paxos implementation from pset3 over to this pset. While I had
+high aspirations for implementing PBFT from scratch and making this fully networked and
+fully functional, reality hit when I arrived home after moving out and wanted to spend
+time with my family before I moved to San Francisco at the end of the week.
+
+for the most part, the port was fairly simple compared to pset3. this is not actually
+serialized/networked yet though. right now the paxos test is still an in-process netsim
+thing that passes c++ tracker announce structs around directly. the important part is that
+the pancy request/db layer got replaced with parsed bittorrent tracker announce requests
+and the shared tracker state machine.
+
+current architecture note:
+the live http tracker server is still single-node. it parses /announce and applies it to
+local tracker state. the paxos path currently exists as an in-process simulator test:
+it replicates parsed tracker announce requests through multi-paxos and applies them to
+the same tracker-state code used by the server.
+
+i just didn't have time to fully build out a client that could make this work over the
+network. i spent around 3 hours debugging the tnt issues and weird transmission caching
+and lost a lot of time there.
+
+current paxos tests:
+
+RND="${1:-20}"
+
+build/traxos-paxos-test -R "${RND}"
+build/traxos-paxos-test --loss 0.05 -R "${RND}"
+build/traxos-paxos-test --failure-mode failed_leader -R "${RND}"
+build/traxos-paxos-test --failure-mode failed_replica --failed-replica 1 -R "${RND}"
+build/traxos-paxos-test --failure-mode failed_replica --failed-replica 2 -R "${RND}"
+build/traxos-paxos-test --failure-mode delayed_leader_failure -R "${RND}"
+build/traxos-paxos-test --failure-mode disruptive_isolate -R "${RND}"
+build/traxos-paxos-test --failure-mode multiple_random_up_down --failed-replica 1 -R "${RND}"
+./test.sh 20
+
+in theory, my implementation also supports other failure models.

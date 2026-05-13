@@ -1,0 +1,41 @@
+\begin{thebibliography}{1}
+
+\bibitem{bittorrentSpec}
+{BitTorrent} specification.
+\newblock \url{https://wiki.theory.org/BitTorrentSpecification}.
+
+\bibitem{trackerProtocol}
+{BitTorrent} tracker protocol.
+\newblock \url{https://wiki.theory.org/BitTorrent_Tracker_Protocol}.
+
+\bibitem{pbft}
+Miguel Castro and Barbara Liskov.
+\newblock Practical byzantine fault tolerance.
+\newblock In {\em Proc. USENIX OSDI}, February 1999.
+\newblock
+  \url{https://css.csail.mit.edu/6.824/2014/papers/castro-practicalbft.pdf}.
+
+\bibitem{mktorrent}
+mktorrent.
+\newblock \url{https://github.com/pobrn/mktorrent/wiki}.
+
+\bibitem{opentracker}
+opentracker.
+\newblock \url{https://erdgeist.org/gitweb/opentracker/}.
+
+\bibitem{tnt}
+tnt: A tiny torrent client.
+\newblock \url{https://github.com/sujanan/tnt/}.
+
+\bibitem{transmission}
+Transmission bittorrent client.
+\newblock \url{https://transmissionbt.com/}.
+
+\bibitem{hotstuff}
+Maofan Yin, Dahlia Malkhi, Michael~K. Reiter, Guy~Golan Gueta, and Ittai
+  Abraham.
+\newblock {HotStuff}: {BFT} consensus with linearity and responsiveness.
+\newblock In {\em Proc. ACM PODC}, July 2019.
+\newblock \url{https://dl.acm.org/doi/10.1145/3293611.3331591}.
+
+\end{thebibliography}
